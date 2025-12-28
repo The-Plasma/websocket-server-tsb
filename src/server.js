@@ -18,6 +18,14 @@ app.use(express.json());
 export const clients = new Map(); // userId -> ws
 export const onlineUsers = new Set(); //userId
 
+setInterval(() => {
+  wss.clients.forEach((ws) => {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.ping();
+    }
+  });
+}, 30000);
+
 function broadcastOnlineUsers() {
   const payload = JSON.stringify({
     type: "ONLINE_USERS",
@@ -25,7 +33,9 @@ function broadcastOnlineUsers() {
   });
 
   for (const ws of clients.values()) {
-    ws.send(payload);
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(payload);
+    }
   }
 }
 
@@ -54,11 +64,11 @@ wss.on("connection", (ws, req) => {
 
 app.use("/chat", chatRoute);
 
+const PORT = process.env.PORT || 8080;
 app.use("/", (req, res) => {
   res.send(`WebSocket Server is running on ${PORT}`);
 });
 
-const PORT = process.env.PORT || 8080;
 server.listen(PORT, "0.0.0.0", () => {
   console.log("WS server running on 8080");
 });
