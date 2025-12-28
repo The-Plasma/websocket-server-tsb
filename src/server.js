@@ -44,7 +44,7 @@ wss.on("connection", (ws, req) => {
   console.log(clients);
 
   broadcastOnlineUsers();
-  
+
   ws.on("close", () => {
     clients.delete(user.userId);
     onlineUsers.delete(user.userId);
@@ -59,6 +59,6 @@ app.use("/", (req, res) => {
 });
 
 const PORT = process.env.PORT || 8080;
-server.listen(PORT, () => {
+server.listen(PORT, "0.0.0.0", () => {
   console.log("WS server running on 8080");
 });
