@@ -68,6 +68,10 @@ wss.on("connection", async (ws, req) => {
 app.use("/chat", chatRoute);
 
 const PORT = process.env.PORT || 8080;
+app.get("/health", (req, res) => {
+  res.status(200).send("OK");
+});
+
 app.use("/", (req, res) => {
   res.send(`WebSocket Server is running on ${PORT}`);
 });
