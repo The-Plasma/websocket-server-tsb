@@ -44,24 +44,32 @@ async function broadcastOnlineUsers() {
 
 wss.on("connection", async (ws, req) => {
   const user = authenticateSocket(req);
-  console.log("user in wss connection--->", user);
 
   if (!user) {
     ws.close();
     return;
   }
-  console.log(user);
-  ws.userId = user.userId;
 
-  clients.set(user.userId, ws);
-  await redis.sadd("online_users", user.userId);
+  const userId = user.userId;
+  ws.userId = userId;
 
+  // Close any existing connection for this user (tab refresh / duplicate tab)
+  const existing = clients.get(userId);
+  if (existing && existing.readyState === WebSocket.OPEN) {
+    existing.close();
+  }
+
+  clients.set(userId, ws);
+  await redis.sadd("online_users", userId);
   broadcastOnlineUsers();
 
   ws.on("close", async () => {
-    clients.delete(user.userId);
-    await redis.srem("online_users", user.userId);
-    console.log("user in wss disconnecting--->");
+    // Only remove from online list if this is still the registered connection
+    if (clients.get(userId) === ws) {
+      clients.delete(userId);
+      await redis.srem("online_users", userId);
+      broadcastOnlineUsers(); // ← notify everyone the user went offline
+    }
   });
 });
 

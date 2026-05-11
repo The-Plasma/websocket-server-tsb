@@ -1,3 +1,4 @@
+import WebSocket from "ws";
 import redis from "./redis.js";
 import { clients } from "./server.js";
 
@@ -20,35 +21,28 @@ export const ConversationInitialization = async (req, res) => {
 };
 
 export const messageSent = async (req, res) => {
-  const { conversationId, message } = req.body;
-  console.log(conversationId, message);
+  const { conversationId, message, recipientIds } = req.body;
 
-  const users = await redis.smembers(`conversation:${conversationId}`);
-  console.log(users);
-  if (!users) return res.json({ delivered: 0 });
+  // Prefer explicit recipientIds from the backend (avoids Redis conversation lookup).
+  // Fall back to Redis set for backwards compatibility.
+  let targetIds = recipientIds;
+  if (!targetIds?.length) {
+    targetIds = await redis.smembers(`conversation:${conversationId}`);
+  }
 
+  if (!targetIds?.length) return res.json({ delivered: 0 });
+
+  const customMessage = { ...message, group_id: conversationId };
   let delivered = 0;
 
-  const customMessage = {
-    ...message,
-    group_id: conversationId,
-  };
-
-  console.log(customMessage);
-
-  users.forEach((userId) => {
+  targetIds.forEach((userId) => {
     const ws = clients.get(userId);
-    if (ws && ws.readyState === 1) {
-      ws.send(
-        JSON.stringify({
-          type: "NEW_MESSAGE",
-          payload: customMessage,
-        })
-      );
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "NEW_MESSAGE", payload: customMessage }));
       delivered++;
     }
   });
-  console.log(delivered);
+
   res.json({ delivered });
 };
 
