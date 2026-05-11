@@ -1,6 +1,6 @@
 import express from "express";
 import http from "http";
-import WebSocket, { WebSocketServer } from "ws";
+import { Server } from "socket.io";
 import cors from "cors";
 import dotenv from "dotenv";
 import chatRoute from "./chatRoutes.js";
@@ -9,66 +9,53 @@ import redis from "./redis.js";
 
 dotenv.config();
 const app = express();
-
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server });
+
+const io = new Server(server, {
+  cors: { origin: "*", methods: ["GET", "POST"] },
+  transports: ["websocket", "polling"],
+});
 
 app.use(cors({ origin: "*" }));
 app.use(express.json());
 
-export const clients = new Map(); // userId -> ws
-export const onlineUsers = new Set(); //userId
+export const clients = new Map(); // userId -> socket
 
-setInterval(() => {
-  wss.clients.forEach((ws) => {
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.ping();
-    }
-  });
-}, 30000);
+// Auth middleware — reads token from auth or query
+io.use((socket, next) => {
+  const token = socket.handshake.auth?.token || socket.handshake.query?.token;
+  if (!token) return next(new Error("Unauthorized"));
+  const req = { url: `/?token=${encodeURIComponent(token)}` };
+  const user = authenticateSocket(req);
+  if (!user) return next(new Error("Invalid token"));
+  socket.user = user;
+  next();
+});
 
 async function broadcastOnlineUsers() {
   const users = await redis.smembers("online_users");
-
-  const payload = JSON.stringify({
-    type: "ONLINE_USERS",
-    payload: users,
-  });
-
-  for (const ws of clients.values()) {
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.send(payload);
-    }
+  const payload = { type: "ONLINE_USERS", payload: users };
+  for (const socket of clients.values()) {
+    socket.emit("message", payload);
   }
 }
 
-wss.on("connection", async (ws, req) => {
-  const user = authenticateSocket(req);
+io.on("connection", async (socket) => {
+  const userId = socket.user.userId;
+  socket.userId = userId;
 
-  if (!user) {
-    ws.close();
-    return;
-  }
-
-  const userId = user.userId;
-  ws.userId = userId;
-
-  // Close any existing connection for this user (tab refresh / duplicate tab)
   const existing = clients.get(userId);
-  if (existing && existing.readyState === WebSocket.OPEN) {
-    existing.close();
-  }
+  if (existing) existing.disconnect(true);
 
-  clients.set(userId, ws);
+  clients.set(userId, socket);
   await redis.sadd("online_users", userId);
   broadcastOnlineUsers();
 
-  ws.on("close", async () => {
-    // Only remove from online list if this is still the registered connection
-    if (clients.get(userId) === ws) {
+  socket.on("disconnect", async () => {
+    if (clients.get(userId) === socket) {
       clients.delete(userId);
       await redis.srem("online_users", userId);
-      broadcastOnlineUsers(); // ← notify everyone the user went offline
+      broadcastOnlineUsers();
     }
   });
 });
@@ -76,14 +63,7 @@ wss.on("connection", async (ws, req) => {
 app.use("/chat", chatRoute);
 
 const PORT = process.env.PORT || 8080;
-app.get("/health", (req, res) => {
-  res.status(200).send("OK");
-});
+app.get("/health", (req, res) => res.status(200).send("OK"));
+app.use("/", (req, res) => res.send(`WebSocket Server is running on ${PORT}`));
 
-app.use("/", (req, res) => {
-  res.send(`WebSocket Server is running on ${PORT}`);
-});
-
-server.listen(PORT, () => {
-  console.log("WS server running on 8080");
-});
+server.listen(PORT, () => console.log(`WS server running on ${PORT}`));
